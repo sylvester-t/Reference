@@ -1,0 +1,222 @@
+#install packages to interact with word
+!pip install python-docx > /dev/null 2>&1
+
+#install libreoffice package for converting to pdf
+!apt-get update -qq > /dev/null 2>&1
+!apt-get install -y libreoffice > /dev/null 2>&1
+#install ms core fonts
+!apt-get update > /dev/null 2>&1
+!apt-get install -y ttf-mscorefonts-installer > /dev/null 2>&1
+#copy other font into root/.fonts
+!mkdir -p ~/.fonts > /dev/null 2>&1
+!cp "/content/drive/MyDrive/Draft_warning/Template/Fonts/"*.TTF ~/.fonts/ 2>/dev/null
+#refresh font cache
+!fc-cache -fv > /dev/null 2>&1
+
+
+#edit content control with python-docx and xml
+from docx import Document
+from docx.oxml.ns import qn
+from copy import deepcopy
+import datetime
+import random
+import subprocess
+import sys, os
+import numpy as np
+from pathlib import Path
+from docx.parts.image import ImagePart
+from PIL import Image
+EMUS_PER_INCH = 914400
+
+#define xml namespace
+
+#map word's native xml namespace
+ns={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+#picture namespace
+pic_ns={
+    "a":"http://schemas.openxmlformats.org/drawingml/2006/main",
+    "r":"http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+}
+rel_ns="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+dw_ns={"wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"}
+
+#function to convert docx to pdf using libreoffice with different profile for multithreading purpose so each conversion will use /tmp/lo_profile_xxxx
+import tempfile
+def convert_docx2pdf(docx_path):
+  profile_dir=tempfile.mkdtemp(prefix="lo_profile_")
+
+  subprocess.run([
+      "libreoffice",
+      f"-env:UserInstallation=file://{profile_dir}",
+      "--headless",
+      "--convert-to","pdf",
+      "--outdir",os.path.dirname(docx_path),
+      docx_path
+  ],check=True)
+  os.remove(docx_path)
+
+#alternative of conversion to pdf with multithreading using process locker
+from threading import Lock
+pdf_lock=Lock()
+def convert_docx2pdf(docx_path):
+  with pdf_lock:
+      subprocess.run([
+          "libreoffice",
+          "--headless",
+          "--convert-to","pdf",
+          "--outdir",os.path.dirname(docx_path),
+          docx_path
+      ],check=True)
+  os.remove(docx_path)
+  
+  
+#function to remove all content control (not keep existing content)
+def remove_all_content_control(document,ns):
+  #find all content controls <w:sdt>
+  for sdt in document.element.xpath("//w:sdt"):
+      parent=sdt.getparent()
+      parent.remove(sdt)
+  for section in document.sections:
+    for sdt in section.header._element.xpath("//w:sdt"):
+      parent=sdt.getparent()
+      parent.remove(sdt)
+    for sdt in section.footer._element.xpath("//w:sdt"):
+      parent=sdt.getparent()
+      parent.remove(sdt)
+
+#fucntion to update picture content control
+#description: part belong to either document.part for body or section.header.part or section.footer.part
+def update_pic_content_control(part,sdt,image_path):
+  #find image reference
+  blips=sdt.xpath(".//a:blip",namespaces=pic_ns)
+
+  if blips:
+    blip=blips[0]
+    #create new relationship
+    rId,image=part.get_or_add_image(image_path)
+    #assign to current picture
+    blip.set(f"{{{rel_ns}}}embed",rId)
+
+    #keep existing height and calculate width
+    extents=sdt.xpath(".//wp:extent",namespaces=dw_ns)
+    if extents:
+      extent=extents[0]
+
+      height_emu=int(extent.get("cy"))
+      #read actual image dim
+      with Image.open(image_path) as img:
+        width_px,height_px=img.size
+
+      aspect_ratio=width_px/height_px
+      width_emu=int(height_emu*aspect_ratio)
+
+      #update extent
+      extent.set("cx",str(width_emu))
+
+      #update drawingML tansform size
+      xfrm=sdt.xpath(".//a:xfrm/a:ext",namespaces=pic_ns)
+
+      if xfrm:
+        xfrm=xfrm[0]
+        xfrm.set("cx",str(width_emu))
+        xfrm.set("cy",str(height_emu))
+
+  remove_content_control(sdt)
+  
+  
+#function to update text content control
+def update_text_content_control(sdt,new_text):
+  #remove placeholder state
+  placeholder_flags=sdt.xpath("./w:sdtPr/w:showingPlcHdr",namespaces=ns)
+
+  for flag in placeholder_flags:
+    flag.getparent().remove(flag)
+
+  #update content
+  text_elements=sdt.xpath(".//w:t",namespaces=ns)
+  if text_elements:
+    text_elements[0].text=new_text
+
+    #remove extra text fragments
+    for node in  text_elements[1:]:
+      node.text=""
+
+  #apply sdt format to all runs
+  remove_content_control(sdt)
+
+#function to remove content control but keep the format and content
+def remove_content_control(sdt):
+  #copy formating
+  sdt_pr=sdt.find(qn("w:sdtPr"))
+  sdt_rpr=None
+
+  if sdt_pr is not None:
+    sdt_rpr=sdt_pr.find(qn("w:rPr"))
+
+  #apply sdt format to all runs
+  if sdt_rpr is not None:
+    for run in sdt.xpath(".//w:r",namespaces=ns):
+      run_rpr=run.find(qn("w:rPr"))
+
+      if run_rpr is None:
+        from docx.oxml import OxmlElement
+        run_rpr=OxmlElement("w:rPr")
+        run.insert(0,run_rpr)
+
+      #clear existing format and copy
+      for child in list(run_rpr):
+        run_rpr.remove(child)
+      for child in sdt_rpr:
+        run_rpr.append(deepcopy(child))
+
+  #remove content control but keep content
+  sdt_content=sdt.find(qn("w:sdtContent"))
+  if sdt_content is not None:
+    parent=sdt.getparent()
+    insert_pos=parent.index(sdt)
+
+    for child in list(sdt_content):
+      parent.insert(insert_pos,deepcopy(child))
+      insert_pos +=1
+    parent.remove(sdt)
+  
+#function to get all content controls /sdts from document body header and footer
+def get_all_content_controls(document,ns):
+  sdts=[]
+  #main document
+  sdts.extend(document.element.xpath("//w:sdt"))
+
+  #headers and footer
+  for section in document.sections:
+    sdts.extend(section.header._element.xpath("//w:sdt"))
+    sdts.extend(section.footer._element.xpath("//w:sdt"))
+  return sdts
+  
+  
+  #main function to update word files
+  def process_document(doc_path):
+     #load and edit docW
+    document=Document(doc_path)
+     #find all content controls <w:sdt> in document.xml
+    for sdt in get_all_content_controls(document,ns):
+      #get content control tag
+      tag_elements=sdt.xpath("./w:sdtPr/w:tag",namespaces=ns)
+      if not tag_elements:
+        continue
+
+      current_tag=tag_elements[0].get(qn("w:val"))
+
+      if current_tag == tag_text:
+        update_text_content_control(sdt,new_txt)
+      elif current_tag == tag_date:
+        update_text_content_control(sdt,str(new_date))
+      elif current_tag == tag_pic:
+        update_pic_content_control(part,sdt,img_path) #part could be document.part or section.header.part or section.footer.part
+      else :
+        continue
+
+      tag_found=True
+
+    remove_all_content_control(document,ns)
+    document.save(doc_path)
