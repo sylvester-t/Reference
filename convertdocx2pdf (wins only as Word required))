@@ -1,0 +1,97 @@
+#can convert doc, docx and ppt of given folder/file
+#to simply usage in wins cmd: convert into bat file using below code:
+####@echo off
+####python <path>\<pyfilename>.py %*
+
+import os
+import argparse
+
+
+from docx2pdf import convert
+import pptxtopdf
+import comtypes.client
+
+parser = argparse.ArgumentParser(description='Example script that takes arguments')
+
+group=parser.add_mutually_exclusive_group(required=True)
+
+group.add_argument('-s',help="source folder")
+group.add_argument('-f',help="singel file")
+
+args = parser.parse_args()
+
+
+def doc_to_pdf(input_path, output_path=None):
+    # Ensure Word can find the file
+    input_path = os.path.abspath(input_path)
+    
+    # Default output path: same as input but with .pdf extension
+    if output_path is None:
+        output_path = os.path.splitext(input_path)[0] + ".pdf"
+    
+    # Initialize Word application
+    word = comtypes.client.CreateObject('Word.Application')
+    word.Visible = False
+
+    try:
+        # Open .doc or .docx
+        doc = word.Documents.Open(input_path)
+        # File format 17 = PDF
+        doc.SaveAs(output_path, FileFormat=17)
+        doc.Close()
+        print(f"✅ Converted successfully: {output_path}")
+    except Exception as e:
+        print(f"❌ Failed to convert {input_path}: {e}")
+    finally:
+        word.Quit()
+
+def convert_file(full_path):
+    full_path=os.path.abspath(full_path)
+    
+    if not os.path.exists(full_path):
+        print(f"File does not exist : {full_path}")
+        return
+        
+    filename=os.path.basename(full_path)
+    folder=os.path.dirname(full_path)
+    
+    if filename.endswith(".docx"):
+        print(filename)
+        try:
+            convert(full_path)
+            print(f" converted: {filename}")
+        except Exception as e:
+            print(f"failed to convert {filename}: {e}")
+
+    elif filename.endswith(".doc"):
+        print(filename)
+        doc_to_pdf(full_path)
+
+    elif filename.endswith((".ppt", ".pptx")):
+        print(filename)
+        try:
+            pptxtopdf.convert(full_path, folder)
+            print(f" converted: {filename}")
+        except Exception as e:
+            print(f"failed to convert {filename}: {e}")
+
+    else:
+        print(f"Unsupported file type: {filename}")
+
+if args.f:
+    convert_file(args.f)
+
+elif args.s:
+    src = os.path.abspath(os.path.normpath(args.s))
+
+    if not os.path.exists(src):
+        print(f"Path does not exist: {src}")
+        exit(1)
+
+    print(f"Normalized source path: {src}")
+
+    for filename in os.listdir(src):
+        full_path = os.path.join(src, filename)
+
+        if os.path.isfile(full_path):
+            convert_file(full_path)
