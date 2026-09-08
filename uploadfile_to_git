@@ -1,0 +1,27 @@
+#update files into repo branch
+
+#nagivate to folder
+cd "folder path"
+
+
+
+# 1. Add your files to staging
+git add .
+
+# 2. Make your first commit
+git commit -m "Add new files"
+
+#check branch
+git branch
+
+# 3. Rename current branch to main (if needed)
+git branch -M main
+
+# 4. Push to GitHub main branch
+git push -u origin main
+
+#logout and clear creds
+git credential reject
+#Plaintext
+protocol=https
+host=github.com
