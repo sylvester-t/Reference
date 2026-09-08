@@ -1,0 +1,43 @@
+#create tag dictionary
+tag_values = {
+  "tag_title": new_value,
+  "tag_title": str(new_value)
+  }
+  
+#function to update sdt generically including both text and pic
+def fill_document(document, text_tags, image_tags=None, part=None):
+ 
+  image_tags = image_tags or {}
+  #call function to get all content controls in the document
+  for sdt in get_all_content_controls(document, ns):
+ 
+    tag_elements = sdt.xpath("./w:sdtPr/w:tag", namespaces=ns)
+ 
+    if not tag_elements:
+      continue
+ 
+    tag = tag_elements[0].get(qn("w:val"))
+ 
+    if tag in text_tags:
+    #call function to update text control if matched
+      update_text_content_control(
+      sdt,
+      str(text_tags[tag])
+      )
+ 
+    elif tag in image_tags:
+    #call function to update pic control if matched
+      update_pic_content_control(
+      part or document.part,
+      sdt,
+      image_tags[tag]
+      )
+
+#function to process the document
+def process_document(doc_path,text_tags,image_tags=None):
+  document=Document(doc_path)
+  fill_document(document,text_tags,image_tags,document.part)
+  remove_all_content_control(document,ns)
+  document.save(doc_path)
+@sylvester-t
+Comment
